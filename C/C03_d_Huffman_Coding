@@ -1,0 +1,1009 @@
+//C03_d_Huffman_Coding
+//http://www.programminglogic.com/implementing-huffman-coding-in-c/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#define len(x) ((int)log10(x)+1)
+
+/* Node of the huffman tree */
+struct node{
+    int value;
+    char letter;
+    struct node *left,*right;
+};
+
+typedef struct node Node;
+
+/* 81 = 8.1%, 128 = 12.8% and so on. The 27th frequency is the space. Source is Wikipedia */
+int englishLetterFrequencies [27] = {81, 15, 28, 43, 128, 23, 20, 61, 71, 2, 1, 40, 24, 69, 76, 20, 1, 61, 64, 91, 28, 10, 24, 1, 20, 1, 130};
+
+/*finds and returns the small sub-tree in the forrest*/
+int findSmaller (Node *array[], int differentFrom){
+    int smaller;
+    int i = 0;
+
+    while (array[i]->value==-1)
+        i++;
+    smaller=i;
+    if (i==differentFrom){
+        i++;
+        while (array[i]->value==-1)
+            i++;
+        smaller=i;
+    }
+
+    for (i=1;i<27;i++){
+        if (array[i]->value==-1)
+            continue;
+        if (i==differentFrom)
+            continue;
+        if (array[i]->value<array[smaller]->value)
+            smaller = i;
+    }
+
+    return smaller;
+}
+
+/*builds the huffman tree and returns its address by reference*/
+void buildHuffmanTree(Node **tree){
+    Node *temp;
+    Node *array[27];
+    int i, subTrees = 27;
+    int smallOne,smallTwo;
+
+    for (i=0;i<27;i++){
+        array[i] = malloc(sizeof(Node));
+        array[i]->value = englishLetterFrequencies[i];
+        array[i]->letter = i;
+        array[i]->left = NULL;
+        array[i]->right = NULL;
+    }
+
+    while (subTrees>1){
+        smallOne=findSmaller(array,-1);
+        smallTwo=findSmaller(array,smallOne);
+        temp = array[smallOne];
+        array[smallOne] = malloc(sizeof(Node));
+        array[smallOne]->value=temp->value+array[smallTwo]->value;
+        array[smallOne]->letter=127;
+        array[smallOne]->left=array[smallTwo];
+        array[smallOne]->right=temp;
+        array[smallTwo]->value=-1;
+        subTrees--;
+    }
+
+    *tree = array[smallOne];
+
+return;
+}
+
+/* builds the table with the bits for each letter. 1 stands for binary 0 and 2 for binary 1 (used to facilitate arithmetic)*/
+void fillTable(int codeTable[], Node *tree, int Code){
+    if (tree->letter<27)
+        codeTable[(int)tree->letter] = Code;
+    else{
+        fillTable(codeTable, tree->left, Code*10+1);
+        fillTable(codeTable, tree->right, Code*10+2);
+    }
+
+    return;
+}
+
+/*function to compress the input*/
+void compressFile(FILE *input, FILE *output, int codeTable[]){
+    char bit, c, x = 0;
+    int n,length,bitsLeft = 8;
+    int originalBits = 0, compressedBits = 0;
+
+    while ((c=fgetc(input))!=10){
+        originalBits++;
+        if (c==32){
+            length = len(codeTable[26]);
+            n = codeTable[26];
+        }
+        else{
+            length=len(codeTable[c-97]);
+            n = codeTable[c-97];
+        }
+
+        while (length>0){
+            compressedBits++;
+            bit = n % 10 - 1;
+            n /= 10;
+            x = x | bit;
+            bitsLeft--;
+            length--;
+            if (bitsLeft==0){
+                fputc(x,output);
+                x = 0;
+                bitsLeft = 8;
+            }
+            x = x << 1;
+        }
+    }
+
+    if (bitsLeft!=8){
+        x = x << (bitsLeft-1);
+        fputc(x,output);
+    }
+
+    /*print details of compression on the screen*/
+    fprintf(stderr,"Original bits = %dn",originalBits*8);
+    fprintf(stderr,"Compressed bits = %dn",compressedBits);
+    fprintf(stderr,"Saved %.2f%% of memoryn",((float)compressedBits/(originalBits*8))*100);
+
+    return;
+}
+
+/*function to decompress the input*/
+void decompressFile (FILE *input, FILE *output, Node *tree){
+    Node *current = tree;
+    char c,bit;
+    char mask = 1 << 7;
+    int i;
+
+    while ((c=fgetc(input))!=EOF){
+
+        for (i=0;i<8;i++){
+            bit = c & mask;
+            c = c << 1;
+            if (bit==0){
+                current = current->left;
+                if (current->letter!=127){
+                    if (current->letter==26)
+                        fputc(32, output);
+                    else
+                        fputc(current->letter+97,output);
+                    current = tree;
+                }
+            }
+
+            else{
+                current = current->right;
+                if (current->letter!=127){
+                    if (current->letter==26)
+                        fputc(32, output);
+                    else
+                        fputc(current->letter+97,output);
+                    current = tree;
+                }
+            }
+        }
+    }
+
+    return;
+}
+
+/*invert the codes in codeTable2 so they can be used with mod operator by compressFile function*/
+void invertCodes(int codeTable[],int codeTable2[]){
+    int i, n, copy;
+
+    for (i=0;i<27;i++){
+        n = codeTable[i];
+        copy = 0;
+        while (n>0){
+            copy = copy * 10 + n %10;
+            n /= 10;
+        }
+        codeTable2[i]=copy;
+    }
+
+return;
+}
+
+int main(){
+    Node *tree;
+    int codeTable[27], codeTable2[27];
+    int compress;
+    char filename[20];
+    FILE *input, *output;
+
+    buildHuffmanTree(&tree);
+
+    fillTable(codeTable, tree, 0);
+
+    invertCodes(codeTable,codeTable2);
+
+    /*get input details from user*/
+    printf("Type the name of the file to process:n");
+    scanf("%s",filename);
+    printf("Type 1 to compress and 2 to decompress:n");
+    scanf("%d",&compress);
+
+    input = fopen(filename, "r");
+    output = fopen("output.txt","w");
+
+    if (compress==1)
+        compressFile(input,output,codeTable2);
+    else
+        decompressFile(input,output, tree);
+
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+// www.rosettacode.org/wiki/Huffman_coding
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+ 
+#define BYTES 256
+ 
+struct huffcode {
+  int nbits;
+  int code;
+};
+typedef struct huffcode huffcode_t;
+ 
+struct huffheap {
+  int *h;
+  int n, s, cs;
+  long *f;
+};
+typedef struct huffheap heap_t;
+ 
+/* heap handling funcs */
+static heap_t *_heap_create(int s, long *f)
+{
+  heap_t *h;
+  h = malloc(sizeof(heap_t));
+  h->h = malloc(sizeof(int)*s);
+  h->s = h->cs = s;
+  h->n = 0;
+  h->f = f;
+  return h;
+}
+ 
+static void _heap_destroy(heap_t *heap)
+{
+  free(heap->h);
+  free(heap);
+}
+ 
+#define swap_(I,J) do { int t_; t_ = a[(I)];    \
+      a[(I)] = a[(J)]; a[(J)] = t_; } while(0)
+static void _heap_sort(heap_t *heap)
+{
+  int i=1, j=2; /* gnome sort */
+  int *a = heap->h;
+ 
+  while(i < heap->n) { /* smaller values are kept at the end */
+    if ( heap->f[a[i-1]] >= heap->f[a[i]] ) {
+      i = j; j++;
+    } else {
+      swap_(i-1, i);
+      i--;
+      i = (i==0) ? j++ : i;
+    }
+  }
+}
+#undef swap_
+ 
+static void _heap_add(heap_t *heap, int c)
+{
+  if ( (heap->n + 1) > heap->s ) {
+    heap->h = realloc(heap->h, heap->s + heap->cs);
+    heap->s += heap->cs;
+  }
+  heap->h[heap->n] = c;
+  heap->n++;
+  _heap_sort(heap);
+}
+ 
+static int _heap_remove(heap_t *heap)
+{
+  if ( heap->n > 0 ) {
+    heap->n--;
+    return heap->h[heap->n];
+  }
+  return -1;
+}
+ 
+/* huffmann code generator */
+huffcode_t **create_huffman_codes(long *freqs)
+{
+  huffcode_t **codes;
+  heap_t *heap;
+  long efreqs[BYTES*2];
+  int preds[BYTES*2];
+  int i, extf=BYTES;
+  int r1, r2;
+ 
+  memcpy(efreqs, freqs, sizeof(long)*BYTES);
+  memset(&efreqs[BYTES], 0, sizeof(long)*BYTES);
+ 
+  heap = _heap_create(BYTES*2, efreqs);
+  if ( heap == NULL ) return NULL;
+ 
+  for(i=0; i < BYTES; i++) if ( efreqs[i] > 0 ) _heap_add(heap, i);
+ 
+  while( heap->n > 1 )
+  {
+    r1 = _heap_remove(heap);
+    r2 = _heap_remove(heap);
+    efreqs[extf] = efreqs[r1] + efreqs[r2];
+    _heap_add(heap, extf);
+    preds[r1] = extf;
+    preds[r2] = -extf;
+    extf++;
+  }
+  r1 = _heap_remove(heap);
+  preds[r1] = r1;
+  _heap_destroy(heap);
+ 
+  codes = malloc(sizeof(huffcode_t *)*BYTES);
+ 
+  int bc, bn, ix;
+  for(i=0; i < BYTES; i++) {
+    bc=0; bn=0;
+    if ( efreqs[i] == 0 ) { codes[i] = NULL; continue; }
+    ix = i;
+    while( abs(preds[ix]) != ix ) {
+      bc |= ((preds[ix] >= 0) ? 1 : 0 ) << bn;
+      ix = abs(preds[ix]);
+      bn++;
+    }
+    codes[i] = malloc(sizeof(huffcode_t));
+    codes[i]->nbits = bn;
+    codes[i]->code = bc;
+  }
+  return codes;
+}
+ 
+void free_huffman_codes(huffcode_t **c)
+{
+  int i;
+ 
+  for(i=0; i < BYTES; i++) free(c[i]);
+  free(c);
+}
+ 
+#define MAXBITSPERCODE 100
+ 
+void inttobits(int c, int n, char *s)
+{
+  s[n] = 0;
+  while(n > 0) {
+    s[n-1] = (c%2) + '0';
+    c >>= 1; n--;
+  }
+}
+ 
+const char *test = "this is an example for huffman encoding";
+ 
+int main()
+{
+  huffcode_t **r;
+  int i;
+  char strbit[MAXBITSPERCODE];
+  const char *p;
+  long freqs[BYTES];
+ 
+  memset(freqs, 0, sizeof freqs);
+ 
+  p = test;
+  while(*p != '\0') freqs[*p++]++;
+ 
+  r = create_huffman_codes(freqs);
+ 
+  for(i=0; i < BYTES; i++) {
+    if ( r[i] != NULL ) {
+      inttobits(r[i]->code, r[i]->nbits, strbit);
+      printf("%c (%d) %s\n", i, r[i]->code, strbit);
+    }
+  }
+ 
+  free_huffman_codes(r);
+ 
+  return 0;
+}
+
+
+
+
+
+//ALTERNATIVE
+#include <stdio.h>
+#include <string.h>
+ 
+typedef struct node_t {
+    struct node_t *left, *right;
+    int freq;
+    char c;
+} *node;
+ 
+struct node_t pool[256] = {{0}};
+node qqq[255], *q = qqq - 1;
+int n_nodes = 0, qend = 1;
+char *code[128] = {0}, buf[1024];
+ 
+node new_node(int freq, char c, node a, node b)
+{
+    node n = pool + n_nodes++;
+    if (freq) n->c = c, n->freq = freq;
+    else {
+        n->left = a, n->right = b;
+        n->freq = a->freq + b->freq;
+    }
+    return n;
+}
+ 
+/* priority queue */
+void qinsert(node n)
+{
+    int j, i = qend++;
+    while ((j = i / 2)) {
+        if (q[j]->freq <= n->freq) break;
+        q[i] = q[j], i = j;
+    }
+    q[i] = n;
+}
+ 
+node qremove()
+{
+    int i, l;
+    node n = q[i = 1];
+ 
+    if (qend < 2) return 0;
+    qend--;
+    while ((l = i * 2) < qend) {
+        if (l + 1 < qend && q[l + 1]->freq < q[l]->freq) l++;
+        q[i] = q[l], i = l;
+    }
+    q[i] = q[qend];
+    return n;
+}
+ 
+/* walk the tree and put 0s and 1s */
+void build_code(node n, char *s, int len)
+{
+    static char *out = buf;
+    if (n->c) {
+        s[len] = 0;
+        strcpy(out, s);
+        code[n->c] = out;
+        out += len + 1;
+        return;
+    }
+ 
+    s[len] = '0'; build_code(n->left,  s, len + 1);
+    s[len] = '1'; build_code(n->right, s, len + 1);
+}
+ 
+void init(const char *s)
+{
+    int i, freq[128] = {0};
+    char c[16];
+ 
+    while (*s) freq[(int)*s++]++;
+ 
+    for (i = 0; i < 128; i++)
+        if (freq[i]) qinsert(new_node(freq[i], i, 0, 0));
+ 
+    while (qend > 2) 
+        qinsert(new_node(0, 0, qremove(), qremove()));
+ 
+    build_code(q[1], c, 0);
+}
+ 
+void encode(const char *s, char *out)
+{
+    while (*s) {
+        strcpy(out, code[*s]);
+        out += strlen(code[*s++]);
+    }
+}
+ 
+void decode(const char *s, node t)
+{
+    node n = t;
+    while (*s) {
+        if (*s++ == '0') n = n->left;
+        else n = n->right;
+ 
+        if (n->c) putchar(n->c), n = t;
+    }
+ 
+    putchar('\n');
+    if (t != n) printf("garbage input\n");
+}
+ 
+int main(void)
+{
+    int i;
+    const char *str = "this is an example for huffman encoding", buf[1024];
+ 
+    init(str);
+    for (i = 0; i < 128; i++)
+        if (code[i]) printf("'%c': %s\n", i, code[i]);
+ 
+    encode(str, buf);
+    printf("encoded: %s\n", buf);
+ 
+    printf("decoded: ");
+    decode(buf, q[1]);
+ 
+    return 0;
+}
+
+//http://www.geeksforgeeks.org/greedy-algorithms-set-3-huffman-coding/
+// C program for Huffman Coding
+#include <stdio.h>
+#include <stdlib.h>
+ 
+// This constant can be avoided by explicitly calculating height of Huffman Tree
+#define MAX_TREE_HT 100
+ 
+// A Huffman tree node
+struct MinHeapNode
+{
+    char data;  // One of the input characters
+    unsigned freq;  // Frequency of the character
+    struct MinHeapNode *left, *right; // Left and right child of this node
+};
+ 
+// A Min Heap:  Collection of min heap (or Hufmman tree) nodes
+struct MinHeap
+{
+    unsigned size;    // Current size of min heap
+    unsigned capacity;   // capacity of min heap
+    struct MinHeapNode **array;  // Attay of minheap node pointers
+};
+ 
+// A utility function allocate a new min heap node with given character
+// and frequency of the character
+struct MinHeapNode* newNode(char data, unsigned freq)
+{
+    struct MinHeapNode* temp =
+          (struct MinHeapNode*) malloc(sizeof(struct MinHeapNode));
+    temp->left = temp->right = NULL;
+    temp->data = data;
+    temp->freq = freq;
+    return temp;
+}
+ 
+// A utility function to create a min heap of given capacity
+struct MinHeap* createMinHeap(unsigned capacity)
+{
+    struct MinHeap* minHeap =
+         (struct MinHeap*) malloc(sizeof(struct MinHeap));
+    minHeap->size = 0;  // current size is 0
+    minHeap->capacity = capacity;
+    minHeap->array =
+     (struct MinHeapNode**)malloc(minHeap->capacity * sizeof(struct MinHeapNode*));
+    return minHeap;
+}
+ 
+// A utility function to swap two min heap nodes
+void swapMinHeapNode(struct MinHeapNode** a, struct MinHeapNode** b)
+{
+    struct MinHeapNode* t = *a;
+    *a = *b;
+    *b = t;
+}
+ 
+// The standard minHeapify function.
+void minHeapify(struct MinHeap* minHeap, int idx)
+{
+    int smallest = idx;
+    int left = 2 * idx + 1;
+    int right = 2 * idx + 2;
+ 
+    if (left < minHeap->size &&
+        minHeap->array[left]->freq < minHeap->array[smallest]->freq)
+      smallest = left;
+ 
+    if (right < minHeap->size &&
+        minHeap->array[right]->freq < minHeap->array[smallest]->freq)
+      smallest = right;
+ 
+    if (smallest != idx)
+    {
+        swapMinHeapNode(&minHeap->array[smallest], &minHeap->array[idx]);
+        minHeapify(minHeap, smallest);
+    }
+}
+ 
+// A utility function to check if size of heap is 1 or not
+int isSizeOne(struct MinHeap* minHeap)
+{
+    return (minHeap->size == 1);
+}
+ 
+// A standard function to extract minimum value node from heap
+struct MinHeapNode* extractMin(struct MinHeap* minHeap)
+{
+    struct MinHeapNode* temp = minHeap->array[0];
+    minHeap->array[0] = minHeap->array[minHeap->size - 1];
+    --minHeap->size;
+    minHeapify(minHeap, 0);
+    return temp;
+}
+ 
+// A utility function to insert a new node to Min Heap
+void insertMinHeap(struct MinHeap* minHeap, struct MinHeapNode* minHeapNode)
+{
+    ++minHeap->size;
+    int i = minHeap->size - 1;
+    while (i && minHeapNode->freq < minHeap->array[(i - 1)/2]->freq)
+    {
+        minHeap->array[i] = minHeap->array[(i - 1)/2];
+        i = (i - 1)/2;
+    }
+    minHeap->array[i] = minHeapNode;
+}
+ 
+// A standard funvtion to build min heap
+void buildMinHeap(struct MinHeap* minHeap)
+{
+    int n = minHeap->size - 1;
+    int i;
+    for (i = (n - 1) / 2; i >= 0; --i)
+        minHeapify(minHeap, i);
+}
+ 
+// A utility function to print an array of size n
+void printArr(int arr[], int n)
+{
+    int i;
+    for (i = 0; i < n; ++i)
+        printf("%d", arr[i]);
+    printf("\n");
+}
+ 
+// Utility function to check if this node is leaf
+int isLeaf(struct MinHeapNode* root)
+{
+    return !(root->left) && !(root->right) ;
+}
+ 
+// Creates a min heap of capacity equal to size and inserts all character of 
+// data[] in min heap. Initially size of min heap is equal to capacity
+struct MinHeap* createAndBuildMinHeap(char data[], int freq[], int size)
+{
+    struct MinHeap* minHeap = createMinHeap(size);
+    for (int i = 0; i < size; ++i)
+        minHeap->array[i] = newNode(data[i], freq[i]);
+    minHeap->size = size;
+    buildMinHeap(minHeap);
+    return minHeap;
+}
+ 
+// The main function that builds Huffman tree
+struct MinHeapNode* buildHuffmanTree(char data[], int freq[], int size)
+{
+    struct MinHeapNode *left, *right, *top;
+ 
+    // Step 1: Create a min heap of capacity equal to size.  Initially, there are
+    // modes equal to size.
+    struct MinHeap* minHeap = createAndBuildMinHeap(data, freq, size);
+ 
+    // Iterate while size of heap doesn't become 1
+    while (!isSizeOne(minHeap))
+    {
+        // Step 2: Extract the two minimum freq items from min heap
+        left = extractMin(minHeap);
+        right = extractMin(minHeap);
+ 
+        // Step 3:  Create a new internal node with frequency equal to the
+        // sum of the two nodes frequencies. Make the two extracted node as
+        // left and right children of this new node. Add this node to the min heap
+        // '$' is a special value for internal nodes, not used
+        top = newNode('$', left->freq + right->freq);
+        top->left = left;
+        top->right = right;
+        insertMinHeap(minHeap, top);
+    }
+ 
+    // Step 4: The remaining node is the root node and the tree is complete.
+    return extractMin(minHeap);
+}
+ 
+// Prints huffman codes from the root of Huffman Tree.  It uses arr[] to
+// store codes
+void printCodes(struct MinHeapNode* root, int arr[], int top)
+{
+    // Assign 0 to left edge and recur
+    if (root->left)
+    {
+        arr[top] = 0;
+        printCodes(root->left, arr, top + 1);
+    }
+ 
+    // Assign 1 to right edge and recur
+    if (root->right)
+    {
+        arr[top] = 1;
+        printCodes(root->right, arr, top + 1);
+    }
+ 
+    // If this is a leaf node, then it contains one of the input
+    // characters, print the character and its code from arr[]
+    if (isLeaf(root))
+    {
+        printf("%c: ", root->data);
+        printArr(arr, top);
+    }
+}
+ 
+// The main function that builds a Huffman Tree and print codes by traversing
+// the built Huffman Tree
+void HuffmanCodes(char data[], int freq[], int size)
+{
+   //  Construct Huffman Tree
+   struct MinHeapNode* root = buildHuffmanTree(data, freq, size);
+ 
+   // Print Huffman codes using the Huffman tree built above
+   int arr[MAX_TREE_HT], top = 0;
+   printCodes(root, arr, top);
+}
+ 
+// Driver program to test above functions
+int main()
+{
+    char arr[] = {'a', 'b', 'c', 'd', 'e', 'f'};
+    int freq[] = {5, 9, 12, 13, 16, 45};
+    int size = sizeof(arr)/sizeof(arr[0]);
+    HuffmanCodes(arr, freq, size);
+    return 0;
+}
+
+//ALTERNATIVE
+//http://tsao.wikidot.com/heap-explicit-implementation
+#include <stdio.h>
+#include <stdlib.h>
+ 
+#define NUM 100
+#define RANGE 1000
+ 
+typedef struct node {
+    int val;
+    struct node* left;
+    struct node* right;
+    struct node* parent;
+} node;
+ 
+typedef struct queue {
+    struct queue* next;
+    node* element;
+} queue;
+ 
+//a factory to create a node
+node* get_a_node(int x, node* parent) {
+    node* nd = malloc(sizeof(node));
+    nd->val = x;
+    nd->left = NULL;
+    nd->right = NULL;
+    nd->parent = parent;
+    return nd;
+}
+ 
+//a factory to create a queue element
+queue* get_a_queue(node* element) {
+    queue* q = malloc(sizeof(queue));
+    q->next = NULL;
+    q->element = element;
+    return q;
+}
+ 
+//function to free queue's memory
+void free_queue(queue** q) {
+        queue* current_q = *q;
+        while(current_q != NULL) {
+            *q = current_q->next;
+            free(current_q);
+            current_q = *q;
+        }
+}
+ 
+//put nodes into q
+void queue_put(node* n, queue** last) {
+    if(n->left != NULL) {
+        (*last)->next = get_a_queue(n->left);
+        (*last) = (*last)->next;
+    }
+    if(n->right != NULL) {
+        (*last)->next = get_a_queue(n->right);
+        (*last) = (*last)->next;
+    }
+}
+ 
+//insert a node into a heap
+void heap_insert(node** root, int x) {
+    //insert new node if the heap is empty
+    if(*root == NULL) {
+        *root = get_a_node(x, NULL);
+    }
+    //serach for a proper insert point
+    else {
+        queue* q = get_a_queue(*root);
+        queue* current_q = q;
+        queue* last_q = q;
+        node* current_node;
+ 
+        while(current_q != NULL) {
+            //get one node out of queue
+            current_node = current_q->element;
+ 
+                if(current_node->left == NULL) {
+                    current_node->left = get_a_node(x, current_node);
+                    current_node = current_node->left;
+                }
+                else if(current_node->right == NULL) {
+                    current_node->right = get_a_node(x, current_node);
+                    current_node = current_node->right;
+                }
+                else {
+                    queue_put(current_node, &last_q);
+                    //increment the current pointer
+                    current_q = current_q->next;
+                    continue;
+                }
+ 
+                //put the node to proper point
+                while(current_node->parent != NULL && current_node->parent->val < current_node->val) {
+                    //swap the value
+                    int temp = current_node->parent->val;
+                    current_node->parent->val = current_node->val;
+                    current_node->val = temp;
+                    current_node = current_node->parent;
+                }
+                break;
+ 
+        }
+ 
+        free_queue(&q);
+    }
+    return;
+}
+ 
+void heap_remove(node** root) {
+    if(*root != NULL) {
+        queue* q = get_a_queue(*root);
+        queue* current_q = q;
+        queue* last_q = q;
+        queue* previous_q;
+        node* current_node;
+ 
+        //find the last node
+        while(current_q != NULL) {
+            current_node = current_q->element;
+ 
+            queue_put(current_node, &last_q);
+ 
+            previous_q = current_q;
+            current_q = current_q->next;
+        }
+        current_node = previous_q->element;
+        free_queue(&q);
+ 
+        //remove last node and get the value to root
+        if(current_node->parent == NULL) {
+            free(current_node);
+            *root = NULL;
+        }
+        else {
+            (*root)->val = current_node->val;
+            current_node = current_node->parent;
+            if(current_node->right != NULL) {
+                free(current_node->right);
+                current_node->right = NULL;
+            }
+            else {    
+                free(current_node->left);
+                current_node->left = NULL;
+            }
+            //move down the value
+            int a, b, c;
+            current_node = *root;
+            while(1) {
+                if(current_node->left == NULL) {
+                    //implies current->right == NULL is true
+                    break;
+                }
+                else if(current_node->right == NULL) {
+                    a = current_node->val;
+                    b = current_node->left->val;
+                    if(a < b) {
+                        current_node->val = b;
+                        current_node->left->val = a;
+                        current_node = current_node->left;
+                    }
+                    else {
+                        break;
+                    }
+                }
+                else {
+                    a = current_node->val;
+                    b = current_node->left->val;
+                    c = current_node->right->val;
+                    //a is the largest, do nothing
+                    if(a >= b && a >= c) {
+                        break;
+                    }
+                    //b is the largest, swap a and b
+                    else if(b > a && b >= c) {
+                        current_node->left->val = a;
+                        current_node->val = b;
+                        current_node = current_node->left;
+                    }
+                    //c is the largest, swap a and c
+                    else {
+                        current_node->right->val = a;
+                        current_node->val = c;
+                        current_node = current_node->right;
+                    }
+                }
+            }
+        }
+    }
+}
+ 
+void print_heap(node** root) {
+    if(*root != NULL) {
+        queue* q = get_a_queue(*root);
+        queue* current_q = q;
+        queue* last_q = q;
+        node* test;
+        while(current_q != NULL) {
+            test = current_q->element;
+            queue_put(test, &last_q);
+            printf("%d ", test->val);
+            current_q = current_q->next;
+        }
+        free_queue(&q);
+        printf("\n");
+    }
+}
+ 
+//linear search for max of the array
+int max(int* a, int length, int* index) {
+    int i, max = a[0];
+    *index = 0;
+    for(i = 0; i < length; i++) {
+        if(a[i] > max) {
+            max = a[i];
+            *index = i;
+        }
+    }
+    return max;
+}
+ 
+int main () {
+    node *root = NULL;
+    int i, r, m;
+    int verifier[NUM];
+ 
+    srand(time(NULL));
+ 
+    for(i = 0; i < NUM; i++) {
+        r = rand()%RANGE;
+        heap_insert(&root, r);
+        verifier[i] = r;
+    }
+ 
+    while(1) {
+        r = rand()%RANGE;
+ 
+        m = max(verifier, NUM, &i);
+        if(verifier[i] != root->val) {
+            printf("Wrong!!\n");
+            exit(1);
+        }
+ 
+        heap_remove(&root);
+        heap_insert(&root, r);
+        verifier[i] = r;
+    }
+ 
+    return 0;
+}
